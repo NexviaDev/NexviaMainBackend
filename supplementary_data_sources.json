@@ -1,0 +1,106 @@
+{
+  "meta": {
+    "purpose": "Nexvia 입찰공고 프로젝트에 나라장터 OpenAPI 외 보조로 쓸 수 있는 RSS·공공 API 정리",
+    "note": "URL·파라미터는 기관 정책으로 바뀔 수 있습니다. 연동 전 각 사이트/공공데이터포털에서 최신 문서·이용약관을 확인하세요. KBID(kbid.co.kr)는 공개 RSS 피드를 제공하지 않는 것으로 알려져 있어 목록에 넣지 않았습니다.",
+    "lastReviewed": "2026-05-12"
+  },
+  "alreadyInThisRepo": [
+    {
+      "id": "g2b-bid-public",
+      "name": "조달청 나라장터 입찰공고정보 OpenAPI",
+      "type": "openapi",
+      "baseUrlDefault": "https://apis.data.go.kr/1230000/ad/BidPublicInfoService",
+      "registration": "https://www.data.go.kr — 서비스명으로 검색 후 활용신청, DATA_GO_KR_SERVICE_KEY",
+      "relation": "backend GET /api/v1/bid/:operation"
+    },
+    {
+      "id": "g2b-openg-result",
+      "name": "조달청 나라장터 개찰결과(낙찰 등) OpenAPI",
+      "type": "openapi",
+      "baseUrlDefault": "https://apis.data.go.kr/1230000/as/ScsbidInfoService",
+      "registration": "https://www.data.go.kr",
+      "relation": "backend GET /api/v1/openg/:operation"
+    },
+    {
+      "id": "g2b-prespec",
+      "name": "조달청 나라장터 사전규격정보 OpenAPI",
+      "type": "openapi",
+      "baseUrlDefault": "https://apis.data.go.kr/1230000/HrcspSsstndrdInfoService",
+      "registration": "https://www.data.go.kr — 나라장터 사전규격정보 활용신청",
+      "relation": "backend GET /api/v1/prespec/:operation (getPublicPrcure* 만 허용)"
+    },
+    {
+      "id": "g2b-ordr-plan",
+      "name": "조달청 나라장터 발주계획현황 OpenAPI",
+      "type": "openapi",
+      "baseUrlDefault": "https://apis.data.go.kr/1230000/OrdrPlanPcurePublicDataService",
+      "registration": "https://www.data.go.kr — 발주계획현황 활용신청",
+      "relation": "backend GET /api/v1/ordrplan/:operation (getOrdrPlanPcure* 만 허용)"
+    },
+    {
+      "id": "bizinfo-events-api",
+      "name": "기업마당 행사·교육 등 JSON/RSS API",
+      "type": "openapi",
+      "urlDefault": "https://www.bizinfo.go.kr/uss/rss/bizinfoEventApi.do",
+      "registration": "https://www.bizinfo.go.kr — 정책정보 개방(지원사업과 동일 crtfcKey)",
+      "relation": "backend GET /api/v1/bizinfo/events"
+    },
+    {
+      "id": "mss-rss-proxy",
+      "name": "중소벤처기업부 RSS (사업공고·공지) — 백엔드 캐시",
+      "type": "rss",
+      "url": "https://www.mss.go.kr/rss/smba/board/310.do",
+      "relation": "backend GET /api/v1/feeds/mss?smba_board=310|81 (5분 메모리 캐시)"
+    }
+  ],
+  "recommendedOnDataGoKr": [
+    {
+      "id": "g2b-extra-search",
+      "name": "나라장터·조달 관련 추가 OpenAPI",
+      "type": "openapi",
+      "howToFind": "https://www.data.go.kr 에서 키워드 검색: 나라장터, 조달청, 입찰공고, 낙찰, 계약, 발주계획, 사전규격 등",
+      "relation": "입찰 외 발주계획·계약현황·사전규격 등 확장 시 동일 패턴(서버 프록시 + ServiceKey)으로 추가 가능"
+    }
+  ],
+  "rssFeeds": [
+    {
+      "id": "mss-smba-310",
+      "name": "중소벤처기업부 사업공고(RSS)",
+      "type": "rss",
+      "url": "https://www.mss.go.kr/rss/smba/board/310.do",
+      "relation": "입찰과 별개이나 중소기업 지원·사업 공고 모니터링용"
+    },
+    {
+      "id": "mss-smba-81",
+      "name": "중소벤처기업부 공지사항(RSS)",
+      "type": "rss",
+      "url": "https://www.mss.go.kr/rss/smba/board/81.do",
+      "relation": "정책·공지 추적"
+    },
+    {
+      "id": "bizinfo-event-rss",
+      "name": "기업마당 행사·교육 등 RSS 형 API",
+      "type": "rss",
+      "url": "https://www.bizinfo.go.kr/uss/rss/bizinfoEventApi.do",
+      "paramsHint": "crtfcKey(필수), dataType=rss 등 — 기업마당 API 상세 페이지 참고",
+      "registration": "https://www.bizinfo.go.kr — API 신청(인증키)",
+      "relation": "지원사업·행사 정보 보조 수집"
+    }
+  ],
+  "webFeedsOrApis": [
+    {
+      "id": "dart-rss",
+      "name": "금융감독원 DART 전자공시 RSS",
+      "type": "rss",
+      "url": "https://dart.fss.or.kr",
+      "relation": "회사별·공시유형별 RSS는 DART 웹에서 생성·구독. 입찰과 직접 연계되진 않으나 업체 조사 보조"
+    },
+    {
+      "id": "k-startup",
+      "name": "K-Startup(창업·지원 정보)",
+      "type": "openapi",
+      "url": "https://www.k-startup.go.kr",
+      "relation": "창업지원 공고·API는 사이트 내 개발자/오픈API 메뉴에서 확인"
+    }
+  ]
+}
