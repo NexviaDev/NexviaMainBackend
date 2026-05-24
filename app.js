@@ -98,6 +98,24 @@ function isAllowedOpengOperation(name) {
   return typeof name === "string" && /^getOpengResult[A-Za-z0-9]+$/.test(name);
 }
 
+function isAllowedScsbidOperation(name) {
+  return typeof name === "string" && /^getScsbidListSttus[A-Za-z0-9]+$/.test(name);
+}
+
+/** 예비가 상세 — upstream 이 데이터 없을 때 HTTP 404(빈 본문)를 주는 경우가 있음 */
+function isPreparPcDetailOperation(name) {
+  return typeof name === "string" && /PreparPcDetail$/i.test(name);
+}
+
+function emptyOpengJson() {
+  return {
+    response: {
+      header: { resultCode: "00", resultMsg: "정상" },
+      body: { items: [], totalCount: 0 },
+    },
+  };
+}
+
 function isAllowedPrespecOperation(name) {
   return (
     typeof name === "string" &&
@@ -450,6 +468,13 @@ app.get("/api/v1/openg/:operation", async (req, res) => {
     const { status, data, contentType } = await fetchUpstreamOpeng(OPENG_BASE, operation, q);
     const rawText = typeof data === "string" ? data : String(data ?? "");
     const rawLo = rawText.trim().toLowerCase();
+    if (
+      status === 404 &&
+      isPreparPcDetailOperation(operation) &&
+      !rawText.trim()
+    ) {
+      return res.status(200).json(emptyOpengJson());
+    }
     if (status === 403 || rawLo === "forbidden" || rawLo.includes("403 forbidden")) {
       return res.status(502).json({
         error: "openg_forbidden",
@@ -489,6 +514,70 @@ app.get("/api/v1/openg/:operation", async (req, res) => {
       error: "upstream_unreachable",
       message:
         "공공데이터 API 호출에 실패했습니다. 네트워크·슬립·키·OPENG_RESULT_BASE_URL 을 확인하세요.",
+    });
+  }
+});
+
+app.get("/api/v1/scsbid/:operation", async (req, res) => {
+  const { operation } = req.params;
+  if (!isAllowedScsbidOperation(operation)) {
+    return res.status(400).json({
+      error: "invalid_operation",
+      message:
+        "허용되지 않은 오퍼레이션입니다. 낙찰정보서비스의 getScsbidListSttus... 메서드명과 동일한지 확인하세요.",
+    });
+  }
+  if (!SERVICE_KEY) {
+    return res.status(503).json({
+      error: "missing_service_key",
+      message:
+        "backend/.env 의 DATA_GO_KR_SERVICE_KEY 가 비어 있습니다. 공공데이터포털 인증키를 설정하세요.",
+    });
+  }
+
+  try {
+    const q = { ...req.query };
+    if (!q.type) q.type = "json";
+    const { status, data, contentType } = await fetchUpstreamOpeng(OPENG_BASE, operation, q);
+    const rawText = typeof data === "string" ? data : String(data ?? "");
+    const rawLo = rawText.trim().toLowerCase();
+    if (status === 403 || rawLo === "forbidden" || rawLo.includes("403 forbidden")) {
+      return res.status(502).json({
+        error: "scsbid_forbidden",
+        message:
+          "공공데이터가 이 요청을 거부했습니다(403). 낙찰정보서비스 활용신청·일일 한도·인증키를 확인하세요.",
+      });
+    }
+    if (status === 401) {
+      return res.status(502).json({
+        error: "scsbid_unauthorized",
+        message: "인증키가 거부되었습니다(401). DATA_GO_KR_SERVICE_KEY 와 활용신청을 확인하세요.",
+      });
+    }
+    if (status === 500 && rawText.trim() === "Unexpected errors") {
+      return res.status(502).json({
+        error: "scsbid_gateway_error",
+        message:
+          "공공데이터 게이트웨이가 낙찰 API를 거절했습니다(Unexpected errors). OPENG_RESULT_BASE_URL·활용신청을 확인하세요.",
+      });
+    }
+    res.status(status);
+    if (contentType.includes("json")) {
+      try {
+        return res.json(JSON.parse(data));
+      } catch {
+        return res.type("application/json").send(data);
+      }
+    }
+    if (contentType.includes("xml")) {
+      res.type("application/xml");
+    }
+    return res.send(data);
+  } catch (err) {
+    console.error("[scsbid proxy]", err?.message || err);
+    return res.status(502).json({
+      error: "upstream_unreachable",
+      message: "공공데이터 API 호출에 실패했습니다. 네트워크·슬립·키를 확인하세요.",
     });
   }
 });
