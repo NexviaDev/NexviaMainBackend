@@ -5,6 +5,7 @@ import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import axios from "axios";
+import plantsRouter from "./routes/plants.js";
 
 const PORT = Number(process.env.PORT) || 5001;
 const BASE =
@@ -80,7 +81,7 @@ app.use(
     origin: corsOrigin(),
   })
 );
-app.use(express.json({ limit: "256kb" }));
+app.use(express.json({ limit: "6mb" }));
 
 const limiter = rateLimit({
   windowMs: 60_000,
@@ -401,6 +402,8 @@ async function fetchBizinfoUpstream(bizinfoUrl, query) {
 app.get("/health", (_req, res) => {
   res.json({ ok: true });
 });
+
+app.use("/api/v1/plants", plantsRouter);
 
 app.get("/api/v1/bid/:operation", async (req, res) => {
   const { operation } = req.params;

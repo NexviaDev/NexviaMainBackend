@@ -31,3 +31,14 @@
 5) 보조 데이터 소스(RSS·타 기관 API)
 - 나라장터 이외 RSS·공공 API 후보는 루트의 supplementary_data_sources.json 에 정리해 두었습니다.
 - RSS·기업마당 등은 별도 인증키·이용조건이 있으므로, 수집 배치나 별도 라우트를 추가할 때만 서버에 키를 두고 호출하는 것을 권장합니다(프론트 직접 호출 지양).
+
+6) 식물 AI 식별 (Gemini Vision)
+- POST /api/v1/plants/identify — JSON body: { imageBase64, mimeType } (JPEG/PNG/WebP/GIF, 약 4MB 이하 권장).
+- 응답 result.referenceImages: 1순위 추정 종의 Wikipedia 참고 사진 최대 6장.
+- 응답 result.similarCandidates: 비슷한 종 2~4개 + referenceImages(최대 2장), imageUrl(대표 1장).
+- GEMINI_API_KEY 는 backend/.env 에만 보관. 브라우저로 키를 내리지 않음.
+- GEMINI_MODEL 기본 gemini-2.5-flash. thinkingBudget 0(속도). identify 전 warmupGemini 캐시(4분).
+- axios timeout 65초, 429/5xx 시 최대 2회 재시도.
+- 분당 15회 rate limit (/identify). express.json limit 6mb(이미지 base64).
+- GET /api/v1/plants/health — gemini 키 설정 여부 확인.
+- GET /api/v1/plants/warmup — Gemini 연결 워밍(슬립·콜드스타트 완화). 프론트 /plants 에서 20초마다 /health + /plants/health ping 권장.
