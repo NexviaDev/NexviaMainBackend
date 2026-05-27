@@ -791,18 +791,23 @@ app.get("/api/v1/feeds/mss", async (req, res) => {
   }
 });
 
-const server = app.listen(PORT, () => {
-  console.log(`bid proxy listening on http://localhost:${PORT}`);
-});
+export default app;
 
-server.on("error", (err) => {
-  if (err.code === "EADDRINUSE") {
-    console.error(
-      `[오류] 포트 ${PORT} 를 이미 다른 프로그램이 사용 중입니다. (listen EADDRINUSE)\n` +
-        `→ 다른 터미널에서 돌아가는 node/nodemon 을 종료하거나, backend/.env 에서 PORT 를 다른 번호(예: 5001)로 바꾼 뒤 다시 실행하세요.`
-    );
-  } else {
-    console.error("[오류] 서버를 띄우지 못했습니다:", err.message || err);
-  }
-  process.exit(1);
-});
+/** Vercel Serverless 에서는 listen 하지 않음 */
+if (!process.env.VERCEL) {
+  const server = app.listen(PORT, () => {
+    console.log(`bid proxy listening on http://localhost:${PORT}`);
+  });
+
+  server.on("error", (err) => {
+    if (err.code === "EADDRINUSE") {
+      console.error(
+        `[오류] 포트 ${PORT} 를 이미 다른 프로그램이 사용 중입니다. (listen EADDRINUSE)\n` +
+          `→ 다른 터미널에서 돌아가는 node/nodemon 을 종료하거나, backend/.env 에서 PORT 를 다른 번호(예: 5001)로 바꾼 뒤 다시 실행하세요.`,
+      );
+    } else {
+      console.error("[오류] 서버를 띄우지 못했습니다:", err.message || err);
+    }
+    process.exit(1);
+  });
+}
