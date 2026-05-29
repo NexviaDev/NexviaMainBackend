@@ -1,4 +1,4 @@
 {
   "verbose": true,
-  "watch": ["app.js", ".env"]
+  "watch": ["app.js", "routes", "lib", ".env"]
 }

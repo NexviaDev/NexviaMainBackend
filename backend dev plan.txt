@@ -42,3 +42,13 @@
 - 분당 15회 rate limit (/identify). express.json limit 6mb(이미지 base64).
 - GET /api/v1/plants/health — gemini 키 설정 여부 확인.
 - GET /api/v1/plants/warmup — Gemini 연결 워밍(슬립·콜드스타트 완화). 프론트 /plants 에서 20초마다 /health + /plants/health ping 권장.
+
+7) 문서 메일머지 (DOCX)
+- GET /api/v1/doc-merge/health — merge 엔진·LibreOffice 설치 여부.
+- POST /api/v1/doc-merge/analyze — multipart file(.docx) → 양식 내 {{필드명}}·MERGEFIELD 목록 JSON.
+- POST /api/v1/doc-merge/run — JSON { templateBase64, rows:[{...}], exportPdf? } 단일 행 DOCX/PDF.
+- POST /api/v1/doc-merge/run-batch — 여러 행 ZIP (exportPdf 시 서버에 LibreOffice 필요).
+- 치환 문법: Word 양식에 {{회사명}} 형태. 서버는 docxtemplater 로 치환.
+- PDF: LIBREOFFICE_PATH(또는 SOFFICE_PATH) 에 soffice 가 있을 때만 --convert-to pdf. Vercel 기본은 DOCX만.
+- 프론트 /merge — 양식은 브라우저 IndexedDB 저장, 생성 시 templateBase64+rows 를 API 로 전송.
+- express.json limit 16mb(대용량 base64). analyze 는 multer 12mb.

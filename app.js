@@ -6,6 +6,7 @@ import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import axios from "axios";
 import plantsRouter from "./routes/plants.js";
+import docMergeRouter from "./routes/docMerge.js";
 
 const PORT = Number(process.env.PORT) || 5001;
 const BASE =
@@ -81,7 +82,7 @@ app.use(
     origin: corsOrigin(),
   })
 );
-app.use(express.json({ limit: "6mb" }));
+app.use(express.json({ limit: "16mb" }));
 
 const limiter = rateLimit({
   windowMs: 60_000,
@@ -404,6 +405,7 @@ app.get("/health", (_req, res) => {
 });
 
 app.use("/api/v1/plants", plantsRouter);
+app.use("/api/v1/doc-merge", docMergeRouter);
 
 app.get("/api/v1/bid/:operation", async (req, res) => {
   const { operation } = req.params;
@@ -803,7 +805,7 @@ if (!process.env.VERCEL) {
     if (err.code === "EADDRINUSE") {
       console.error(
         `[오류] 포트 ${PORT} 를 이미 다른 프로그램이 사용 중입니다. (listen EADDRINUSE)\n` +
-          `→ 다른 터미널에서 돌아가는 node/nodemon 을 종료하거나, backend/.env 에서 PORT 를 다른 번호(예: 5001)로 바꾼 뒤 다시 실행하세요.`,
+          `→ 다른 터미널에서 돌아가는 node/nodemon 을 종료하거나, backend/.env 에서 PORT 를 다른 번호(예: 5002)로 바꾼 뒤 다시 실행하세요.`,
       );
     } else {
       console.error("[오류] 서버를 띄우지 못했습니다:", err.message || err);
