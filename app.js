@@ -7,6 +7,7 @@ import rateLimit from "express-rate-limit";
 import axios from "axios";
 import plantsRouter from "./routes/plants.js";
 import docMergeRouter from "./routes/docMerge.js";
+import authRouter from "./routes/auth.js";
 
 const PORT = Number(process.env.PORT) || 5001;
 const BASE =
@@ -157,7 +158,10 @@ function parseRssItems(xml, limit = 40) {
       .trim()
       .replace(/<!\[CDATA\[|\]\]>/g, "");
     const pubM = block.match(/<pubDate>([\s\S]*?)<\/pubDate>/i);
-    const pubDate = String(pubM?.[1] ?? "").trim();
+    const pubDate = String(pubM?.[1] ?? "")
+      .trim()
+      .replace(/<!\[CDATA\[|\]\]>/g, "")
+      .trim();
     items.push({ title: title || "—", link: link || "", pubDate: pubDate || "" });
   }
   return items;
@@ -406,6 +410,7 @@ app.get("/health", (_req, res) => {
 
 app.use("/api/v1/plants", plantsRouter);
 app.use("/api/v1/doc-merge", docMergeRouter);
+app.use("/api/v1/auth", authRouter);
 
 app.get("/api/v1/bid/:operation", async (req, res) => {
   const { operation } = req.params;
