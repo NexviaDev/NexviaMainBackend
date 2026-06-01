@@ -8,6 +8,7 @@ import axios from "axios";
 import plantsRouter from "./routes/plants.js";
 import docMergeRouter from "./routes/docMerge.js";
 import authRouter from "./routes/auth.js";
+import listTemplatesRouter from "./routes/listTemplates.js";
 
 const PORT = Number(process.env.PORT) || 5001;
 const BASE =
@@ -141,30 +142,62 @@ const MSS_RSS_ALLOWED = new Set(["310", "81"]);
 const MSS_RSS_TTL_MS = 5 * 60 * 1000;
 const rssCache = new Map();
 
+function decodeRssText(raw) {
+  return String(raw ?? "")
+    .replace(/<!\[CDATA\[|\]\]>/g, "")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .trim();
+}
+
+function parseRssChannelMeta(xml) {
+  const s = String(xml ?? "");
+  const channelBlock = s.match(/<channel>([\s\S]*?)<\/channel>/i)?.[1] ?? "";
+  const pick = (tag) => {
+    const cdata = channelBlock.match(new RegExp(`<${tag}>\\s*<!\\[CDATA\\[([\\s\\S]*?)\\]\\]>\\s*</${tag}>`, "i"));
+    const plain = channelBlock.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`, "i"));
+    return decodeRssText(cdata?.[1] ?? plain?.[1] ?? "");
+  };
+  return {
+    title: pick("title"),
+    link: pick("link"),
+    description: pick("description"),
+    departCode: pick("departCode"),
+  };
+}
+
 function parseRssItems(xml, limit = 40) {
   const s = String(xml ?? "");
+  const channel = parseRssChannelMeta(s);
   const items = [];
   const re = /<item>([\s\S]*?)<\/item>/gi;
   let m;
   while ((m = re.exec(s)) && items.length < limit) {
     const block = m[1];
-    const cdataTitle = block.match(/<title>\s*<!\[CDATA\[([\s\S]*?)\]\]>\s*<\/title>/i);
-    const plainTitle = block.match(/<title>([\s\S]*?)<\/title>/i);
-    const title = String((cdataTitle?.[1] ?? plainTitle?.[1] ?? "").trim())
-      .replace(/<!\[CDATA\[|\]\]>/g, "")
-      .trim();
-    const linkM = block.match(/<link>([\s\S]*?)<\/link>/i);
-    const link = String(linkM?.[1] ?? "")
-      .trim()
-      .replace(/<!\[CDATA\[|\]\]>/g, "");
-    const pubM = block.match(/<pubDate>([\s\S]*?)<\/pubDate>/i);
-    const pubDate = String(pubM?.[1] ?? "")
-      .trim()
-      .replace(/<!\[CDATA\[|\]\]>/g, "")
-      .trim();
-    items.push({ title: title || "—", link: link || "", pubDate: pubDate || "" });
+    const pickTag = (tag) => {
+      const cdata = block.match(new RegExp(`<${tag}>\\s*<!\\[CDATA\\[([\\s\\S]*?)\\]\\]>\\s*</${tag}>`, "i"));
+      const plain = block.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`, "i"));
+      return decodeRssText(cdata?.[1] ?? plain?.[1] ?? "");
+    };
+    const title = pickTag("title");
+    const link = pickTag("link");
+    const pubDate = pickTag("pubDate");
+    const boardItemId = pickTag("id");
+    const cbIdx = link.match(/[?&]cbIdx=(\d+)/i)?.[1] ?? "";
+    const bcIdx = link.match(/[?&]bcIdx=(\d+)/i)?.[1] ?? "";
+    items.push({
+      title: title || "—",
+      link: link || "",
+      pubDate: pubDate || "",
+      boardItemId: boardItemId || "",
+      cbIdx,
+      bcIdx,
+    });
   }
-  return items;
+  return { channel, items };
 }
 
 function sleep(ms) {
@@ -411,6 +444,7 @@ app.get("/health", (_req, res) => {
 app.use("/api/v1/plants", plantsRouter);
 app.use("/api/v1/doc-merge", docMergeRouter);
 app.use("/api/v1/auth", authRouter);
+app.use("/api/v1/list-templates", listTemplatesRouter);
 
 app.get("/api/v1/bid/:operation", async (req, res) => {
   const { operation } = req.params;
@@ -739,7 +773,7 @@ app.get("/api/v1/feeds/mss", async (req, res) => {
   const now = Date.now();
   const hit = rssCache.get(cacheKey);
   if (hit && now - hit.at < MSS_RSS_TTL_MS) {
-    return res.json({ board, cached: true, items: hit.items });
+    return res.json({ board, cached: true, channel: hit.channel ?? null, items: hit.items });
   }
   const url = `https://www.mss.go.kr/rss/smba/board/${board}.do`;
   try {
@@ -785,9 +819,9 @@ app.get("/api/v1/feeds/mss", async (req, res) => {
         message: "RSS 대신 HTML이 반환되었습니다. 기관 사이트 정책·차단일 수 있습니다.",
       });
     }
-    const items = parseRssItems(xml, 50);
-    rssCache.set(cacheKey, { at: now, items });
-    return res.json({ board, cached: false, items });
+    const { channel, items } = parseRssItems(xml, 50);
+    rssCache.set(cacheKey, { at: now, items, channel });
+    return res.json({ board, cached: false, channel, items });
   } catch (err) {
     console.error("[mss rss]", err?.message || err);
     return res.status(502).json({
