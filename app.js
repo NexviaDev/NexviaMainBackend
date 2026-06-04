@@ -9,7 +9,11 @@ import docMergeRouter from "./routes/docMerge.js";
 import authRouter from "./routes/auth.js";
 import listTemplatesRouter from "./routes/listTemplates.js";
 import { createCacheWarmRouter } from "./routes/cacheWarm.js";
+import { createTabSyncRouter } from "./routes/tabSync.js";
 import { startCacheWarmScheduler } from "./lib/cacheWarmScheduler.js";
+import { isMongoConfigured } from "./lib/mongo.js";
+import { listTabSnapshots } from "./lib/tabSyncStore.js";
+import { runTabSync } from "./lib/tabSyncRun.js";
 import { sendUpstreamCacheHit } from "./lib/proxyJsonCache.js";
 import { fetchMssRssBoard } from "./lib/mssRss.js";
 import {
@@ -819,6 +823,7 @@ const cacheWarmDeps = {
 };
 
 app.use("/api/v1/cache", createCacheWarmRouter(cacheWarmDeps));
+app.use("/api/v1/tab-sync", createTabSyncRouter(cacheWarmDeps));
 
 export default app;
 
@@ -827,6 +832,20 @@ if (!process.env.VERCEL) {
   const server = app.listen(PORT, () => {
     console.log(`bid proxy listening on http://localhost:${PORT}`);
     startCacheWarmScheduler(cacheWarmDeps);
+    if (isMongoConfigured()) {
+      setTimeout(async () => {
+        try {
+          const snaps = await listTabSnapshots();
+          if (snaps.length === 0) {
+            console.log("[tab-sync] no snapshots — bootstrap sync starting…");
+            const out = await runTabSync(cacheWarmDeps, { force: true, syncSlot: "bootstrap" });
+            console.log(`[tab-sync] bootstrap done ok=${out.ok}`);
+          }
+        } catch (e) {
+          console.warn("[tab-sync] bootstrap skipped:", e?.message || e);
+        }
+      }, 8_000);
+    }
   });
 
   server.on("error", (err) => {

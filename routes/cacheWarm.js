@@ -60,7 +60,7 @@ export function createCacheWarmRouter(deps) {
 
   /**
    * GET /api/v1/cache/warm?token=...
-   * 외부 cron 또는 수동 — 구매·공사·용역·사전규격 기본 1페이지 upstream 조회 → 30분 서버 캐시
+   * 외부 cron 또는 수동 — 7탭 기본 조건 전 페이지 upstream 조회 → 30분 서버 캐시
    * force=1 이면 캐시 hit 여부와 관계없이 재조회
    * (서버 기동 시 :20·:50 자동 갱신 — cacheWarmScheduler.js)
    */
