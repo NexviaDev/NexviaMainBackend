@@ -32,12 +32,30 @@ const emailLimiter = rateLimit({
   message: { error: "rate_limited", message: "메일 발송 요청이 너무 많습니다. 잠시 후 다시 시도해 주세요." },
 });
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const DEFAULT_LIST_TEMPLATE_ID_PREFIX = "default:";
+
+function isDefaultListTemplateId(id) {
+  return String(id ?? "").startsWith(DEFAULT_LIST_TEMPLATE_ID_PREFIX);
+}
+
+function isAllowedEmailTemplateId(id, ownedIds) {
+  return ownedIds.has(id) || isDefaultListTemplateId(id);
+}
+
 const MAX_EMAIL_RECIPIENTS = 5;
 const MAX_SEND_TEMPLATE_IDS = 10;
 const MAX_EMAIL_ROWS_PER_SECTION = 300;
 const MAX_EMAIL_HEADERS = 20;
 const MAX_EMAIL_CELL_LEN = 500;
+/** 메일 링크 — osnap/psnap 포함 Nexvia 상세 URL (512자 제한 시 스냅샷 잘림 → 빈 상세) */
+const MAX_EMAIL_LINK_LEN = 8192;
+
+function trimEmailHref(hrefRaw) {
+  const href = String(hrefRaw ?? "").trim();
+  if (!href || !/^https?:\/\//i.test(href)) return undefined;
+  return href.slice(0, MAX_EMAIL_LINK_LEN);
+}
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function sanitizeEmailList(raw) {
   const list = Array.isArray(raw) ? raw : typeof raw === "string" ? raw.split(/[,;\s]+/) : [];
@@ -56,17 +74,35 @@ function sanitizeEmailList(raw) {
 
 function normalizeSectionRow(row) {
   if (!Array.isArray(row)) return [];
-  return row
-    .map((cell) => {
+  /* 빈 셀(개찰일시 등)도 유지 — 제거하면 열 수≠헤더 수 → Gmail 표 테두리·정렬 깨짐 */
+  return row.map((cell) => {
       if (cell != null && typeof cell === "object" && !Array.isArray(cell)) {
         const text = String(cell.text ?? "").trim().slice(0, MAX_EMAIL_CELL_LEN);
+        const links = Array.isArray(cell.links)
+          ? cell.links
+              .map((item) => {
+                if (!item || typeof item !== "object") return null;
+                const linkText = String(item.text ?? "").trim().slice(0, MAX_EMAIL_CELL_LEN);
+                const hrefRaw = String(item.href ?? "").trim();
+                const href = trimEmailHref(hrefRaw);
+                if (!linkText || !href) return null;
+                return { text: linkText, href };
+              })
+              .filter(Boolean)
+              .slice(0, 20)
+          : [];
+        if (links.length > 0) {
+          return { text: links.map((l) => l.text).join("\n"), links };
+        }
         const hrefRaw = String(cell.href ?? "").trim();
-        const href = hrefRaw && /^https?:\/\//i.test(hrefRaw) ? hrefRaw.slice(0, 512) : undefined;
+        const href = trimEmailHref(hrefRaw);
+        const linkIcon = cell.linkIcon === true;
+        const linkIconLabel = String(cell.linkIconLabel ?? text).trim().slice(0, MAX_EMAIL_CELL_LEN);
+        if (href && linkIcon) return { text, href, linkIcon: true, linkIconLabel };
         return href ? { text, href } : { text };
       }
       return { text: String(cell ?? "").trim().slice(0, MAX_EMAIL_CELL_LEN) };
-    })
-    .filter((c) => c.text.length > 0 || c.href);
+  });
 }
 
 function sanitizeEmailSections(raw, allowedIds) {
@@ -76,7 +112,7 @@ function sanitizeEmailSections(raw, allowedIds) {
     if (out.length >= MAX_SEND_TEMPLATE_IDS) break;
     if (!item || typeof item !== "object") continue;
     const templateId = String(item.templateId ?? "").trim();
-    if (!templateId || !allowedIds.has(templateId)) continue;
+    if (!templateId || !isAllowedEmailTemplateId(templateId, allowedIds)) continue;
     const templateName = String(item.templateName ?? "").trim().slice(0, MAX_NAME_LEN);
     const categoryLabel = String(item.categoryLabel ?? "").trim().slice(0, 120);
     const fetchNote = String(item.fetchNote ?? "").trim().slice(0, 240);
@@ -341,7 +377,7 @@ router.post("/send-email", emailLimiter, async (req, res) => {
       if (templateIds.length === 0) {
         return res.status(400).json({ error: "invalid_sections", message: "발송할 조회 결과가 없습니다." });
       }
-      const idSet = new Set(templateIds.filter((id) => ownedIds.has(id)));
+      const idSet = new Set(templateIds.filter((id) => isAllowedEmailTemplateId(id, ownedIds)));
       if (idSet.size === 0) {
         return res.status(404).json({ error: "not_found", message: "선택한 템플릿을 찾을 수 없습니다." });
       }
@@ -353,7 +389,7 @@ router.post("/send-email", emailLimiter, async (req, res) => {
 
     const sectionIds = new Set(sections.map((s) => s.templateId));
     for (const id of templateIds) {
-      if (ownedIds.has(id) && !sectionIds.has(id)) {
+      if (isAllowedEmailTemplateId(id, ownedIds) && !sectionIds.has(id)) {
         return res.status(400).json({
           error: "incomplete_sections",
           message: "선택한 템플릿 중 조회 결과가 누락된 항목이 있습니다.",

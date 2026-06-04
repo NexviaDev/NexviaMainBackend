@@ -1,5 +1,4 @@
 import "dotenv/config";
-import https from "node:https";
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
@@ -9,6 +8,14 @@ import plantsRouter from "./routes/plants.js";
 import docMergeRouter from "./routes/docMerge.js";
 import authRouter from "./routes/auth.js";
 import listTemplatesRouter from "./routes/listTemplates.js";
+import { createCacheWarmRouter } from "./routes/cacheWarm.js";
+import { startCacheWarmScheduler } from "./lib/cacheWarmScheduler.js";
+import { sendUpstreamCacheHit } from "./lib/proxyJsonCache.js";
+import { fetchMssRssBoard } from "./lib/mssRss.js";
+import {
+  readUpstreamQueryCache,
+  writeUpstreamQueryCache,
+} from "./lib/upstreamQueryCache.js";
 
 const PORT = Number(process.env.PORT) || 5001;
 const BASE =
@@ -45,12 +52,6 @@ const DATA_GO_HEADERS = {
   "User-Agent": DATA_GO_UA,
 };
 
-/** 중소부 RSS 등 외부 HTTPS — keep-alive·재시도로 연결 끊김 완화 */
-const RSS_HTTPS_AGENT = new https.Agent({
-  keepAlive: true,
-  keepAliveMsecs: 10_000,
-  maxSockets: 8,
-});
 const BIZINFO_FORWARD_PARAMS = new Set([
   "dataType",
   "pageUnit",
@@ -139,66 +140,6 @@ function isAllowedOrdrPlanOperation(name) {
 }
 
 const MSS_RSS_ALLOWED = new Set(["310", "81"]);
-const MSS_RSS_TTL_MS = 5 * 60 * 1000;
-const rssCache = new Map();
-
-function decodeRssText(raw) {
-  return String(raw ?? "")
-    .replace(/<!\[CDATA\[|\]\]>/g, "")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .trim();
-}
-
-function parseRssChannelMeta(xml) {
-  const s = String(xml ?? "");
-  const channelBlock = s.match(/<channel>([\s\S]*?)<\/channel>/i)?.[1] ?? "";
-  const pick = (tag) => {
-    const cdata = channelBlock.match(new RegExp(`<${tag}>\\s*<!\\[CDATA\\[([\\s\\S]*?)\\]\\]>\\s*</${tag}>`, "i"));
-    const plain = channelBlock.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`, "i"));
-    return decodeRssText(cdata?.[1] ?? plain?.[1] ?? "");
-  };
-  return {
-    title: pick("title"),
-    link: pick("link"),
-    description: pick("description"),
-    departCode: pick("departCode"),
-  };
-}
-
-function parseRssItems(xml, limit = 40) {
-  const s = String(xml ?? "");
-  const channel = parseRssChannelMeta(s);
-  const items = [];
-  const re = /<item>([\s\S]*?)<\/item>/gi;
-  let m;
-  while ((m = re.exec(s)) && items.length < limit) {
-    const block = m[1];
-    const pickTag = (tag) => {
-      const cdata = block.match(new RegExp(`<${tag}>\\s*<!\\[CDATA\\[([\\s\\S]*?)\\]\\]>\\s*</${tag}>`, "i"));
-      const plain = block.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`, "i"));
-      return decodeRssText(cdata?.[1] ?? plain?.[1] ?? "");
-    };
-    const title = pickTag("title");
-    const link = pickTag("link");
-    const pubDate = pickTag("pubDate");
-    const boardItemId = pickTag("id");
-    const cbIdx = link.match(/[?&]cbIdx=(\d+)/i)?.[1] ?? "";
-    const bcIdx = link.match(/[?&]bcIdx=(\d+)/i)?.[1] ?? "";
-    items.push({
-      title: title || "—",
-      link: link || "",
-      pubDate: pubDate || "",
-      boardItemId: boardItemId || "",
-      cbIdx,
-      bcIdx,
-    });
-  }
-  return { channel, items };
-}
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
@@ -466,7 +407,31 @@ app.get("/api/v1/bid/:operation", async (req, res) => {
   try {
     const q = { ...req.query };
     if (!q.type) q.type = "json";
+    delete q.nxRefresh;
+    delete q.nx_refresh;
+
+    const cacheProbe = readUpstreamQueryCache("bid", operation, req.query);
+    if (cacheProbe.hit) {
+      res.setHeader("X-Nexvia-Cache", "hit");
+      const rawText = typeof cacheProbe.data === "string" ? cacheProbe.data : String(cacheProbe.data ?? "");
+      res.status(cacheProbe.status);
+      if (cacheProbe.contentType.includes("json") || rawText.trim().startsWith("{")) {
+        try {
+          return res.json(JSON.parse(rawText));
+        } catch {
+          return res.type("application/json").send(rawText);
+        }
+      }
+      if (cacheProbe.contentType.includes("xml")) {
+        res.type("application/xml");
+      }
+      return res.send(cacheProbe.data);
+    }
+
     const { status, data, contentType } = await fetchUpstream(BASE, operation, q);
+    if (cacheProbe.cacheKey && !cacheProbe.bypass && status < 400) {
+      writeUpstreamQueryCache(cacheProbe.cacheKey, { status, data, contentType });
+    }
     res.status(status);
     if (contentType.includes("json")) {
       try {
@@ -635,7 +600,13 @@ app.get("/api/v1/bizinfo/support", async (req, res) => {
     });
   }
   try {
+    const cacheProbe = readUpstreamQueryCache("bizinfo", "support", req.query);
+    if (sendUpstreamCacheHit(res, cacheProbe)) return;
+
     const { status, data, contentType } = await fetchBizinfoUpstream(BIZINFO_URL, req.query);
+    if (cacheProbe.cacheKey && !cacheProbe.bypass && status < 400) {
+      writeUpstreamQueryCache(cacheProbe.cacheKey, { status, data, contentType });
+    }
     res.status(status);
     const raw = typeof data === "string" ? data : JSON.stringify(data ?? "");
     if (contentType.includes("json") || raw.trim().startsWith("{")) {
@@ -666,7 +637,13 @@ app.get("/api/v1/bizinfo/events", async (req, res) => {
     });
   }
   try {
+    const cacheProbe = readUpstreamQueryCache("bizinfo", "events", req.query);
+    if (sendUpstreamCacheHit(res, cacheProbe)) return;
+
     const { status, data, contentType } = await fetchBizinfoUpstream(BIZINFO_EVENT_URL, req.query);
+    if (cacheProbe.cacheKey && !cacheProbe.bypass && status < 400) {
+      writeUpstreamQueryCache(cacheProbe.cacheKey, { status, data, contentType });
+    }
     res.status(status);
     const raw = typeof data === "string" ? data : JSON.stringify(data ?? "");
     if (contentType.includes("json") || raw.trim().startsWith("{")) {
@@ -706,7 +683,34 @@ app.get("/api/v1/prespec/:operation", async (req, res) => {
   try {
     const q = { ...req.query };
     if (!q.type) q.type = "json";
+    delete q.nxRefresh;
+    delete q.nx_refresh;
+
+    const cacheProbe = readUpstreamQueryCache("prespec", operation, req.query);
+    if (cacheProbe.hit) {
+      res.setHeader("X-Nexvia-Cache", "hit");
+      return respondDataGoUpstream(
+        res,
+        {
+          status: cacheProbe.status,
+          data: cacheProbe.data,
+          contentType: cacheProbe.contentType,
+        },
+        {
+          unexpectedMessage:
+            "공공데이터 게이트웨이가 사전규격 API를 거절했습니다(Unexpected errors). data.go.kr 활용신청 상태와 PRESPEC_BASE_URL 을 확인하세요. 현재 사전규격 서비스는 보통 https://apis.data.go.kr/1230000/ao/HrcspSsstndrdInfoService 경로에서 정상 응답합니다. inqryBgnDt/inqryEndDt 는 YYYYMMDDHHmm 입니다.",
+          forbiddenMessage:
+            "사전규격 API 접근이 거부되었습니다(403). 활용신청·인증키·일일 트래픽을 확인하세요.",
+          apiErrorFallback:
+            "사전규격 API가 오류를 반환했습니다. 조회 기간·inqryDiv·파라미터를 참고문서와 맞춰 주세요.",
+        }
+      );
+    }
+
     const upstream = await fetchUpstreamDataGoAuth(PRESPEC_BASE, operation, q, PRESPEC_AUTH_QUERY);
+    if (cacheProbe.cacheKey && !cacheProbe.bypass && upstream.status < 400) {
+      writeUpstreamQueryCache(cacheProbe.cacheKey, upstream);
+    }
     return respondDataGoUpstream(res, upstream, {
       unexpectedMessage:
         "공공데이터 게이트웨이가 사전규격 API를 거절했습니다(Unexpected errors). data.go.kr 활용신청 상태와 PRESPEC_BASE_URL 을 확인하세요. 현재 사전규격 서비스는 보통 https://apis.data.go.kr/1230000/ao/HrcspSsstndrdInfoService 경로에서 정상 응답합니다. inqryBgnDt/inqryEndDt 는 YYYYMMDDHHmm 입니다.",
@@ -769,59 +773,27 @@ app.get("/api/v1/feeds/mss", async (req, res) => {
       message: "smba_board 는 310(사업공고) 또는 81(공지사항) 만 허용됩니다.",
     });
   }
-  const cacheKey = `mss:${board}`;
-  const now = Date.now();
-  const hit = rssCache.get(cacheKey);
-  if (hit && now - hit.at < MSS_RSS_TTL_MS) {
-    return res.json({ board, cached: true, channel: hit.channel ?? null, items: hit.items });
-  }
-  const url = `https://www.mss.go.kr/rss/smba/board/${board}.do`;
+  const force = req.query.nxRefresh === "1" || req.query.nx_refresh === "1" || req.query.refresh === "1";
   try {
-    let lastErr;
-    let r;
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        r = await axios.get(url, {
-          timeout: 45_000,
-          responseType: "text",
-          validateStatus: () => true,
-          httpsAgent: RSS_HTTPS_AGENT,
-          headers: {
-            Accept: "application/rss+xml, application/xml, text/xml, */*",
-            "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
-            "User-Agent": DATA_GO_UA,
-          },
-          maxRedirects: 5,
+    const out = await fetchMssRssBoard(board, { force });
+    if (!out.ok) {
+      if (out.error === "rss_not_rss") {
+        return res.status(502).json({
+          error: "rss_not_rss",
+          message: "RSS 대신 HTML이 반환되었습니다. 기관 사이트 정책·차단일 수 있습니다.",
         });
-        if (r.status >= 500 && attempt < 2) {
-          await sleep(500 * 2 ** attempt);
-          continue;
-        }
-        break;
-      } catch (e) {
-        lastErr = e;
-        if (attempt < 2) await sleep(500 * 2 ** attempt);
-        else throw e;
       }
-    }
-    if (!r) throw lastErr || new Error("rss_fetch_failed");
-
-    if (r.status >= 400) {
       return res.status(502).json({
-        error: "rss_upstream_http",
-        message: `중소벤처기업부 RSS HTTP ${r.status}. 잠시 후 다시 시도하거나 브라우저에서 ${url} 접속이 되는지 확인하세요.`,
+        error: out.error || "rss_upstream_http",
+        message: `중소벤처기업부 RSS HTTP ${out.status ?? "?"}. 잠시 후 다시 시도하세요.`,
       });
     }
-    const xml = String(r.data ?? "");
-    if (!/<rss[\s>]/i.test(xml) && /<html/i.test(xml)) {
-      return res.status(502).json({
-        error: "rss_not_rss",
-        message: "RSS 대신 HTML이 반환되었습니다. 기관 사이트 정책·차단일 수 있습니다.",
-      });
-    }
-    const { channel, items } = parseRssItems(xml, 50);
-    rssCache.set(cacheKey, { at: now, items, channel });
-    return res.json({ board, cached: false, channel, items });
+    return res.json({
+      board: out.board,
+      cached: Boolean(out.cached),
+      channel: out.channel ?? null,
+      items: out.items ?? [],
+    });
   } catch (err) {
     console.error("[mss rss]", err?.message || err);
     return res.status(502).json({
@@ -832,12 +804,29 @@ app.get("/api/v1/feeds/mss", async (req, res) => {
   }
 });
 
+const cacheWarmDeps = {
+  serviceKey: SERVICE_KEY,
+  fetchBid: (operation, query) => fetchUpstream(BASE, operation, query),
+  fetchPrespec: (operation, query) =>
+    fetchUpstreamDataGoAuth(PRESPEC_BASE, operation, query, PRESPEC_AUTH_QUERY),
+  fetchBizinfoSupport: BIZINFO_CRTFC_KEY
+    ? (query) => fetchBizinfoUpstream(BIZINFO_URL, query)
+    : undefined,
+  fetchBizinfoEvents: BIZINFO_CRTFC_KEY
+    ? (query) => fetchBizinfoUpstream(BIZINFO_EVENT_URL, query)
+    : undefined,
+  warmMssBoard: (board, opts) => fetchMssRssBoard(board, opts),
+};
+
+app.use("/api/v1/cache", createCacheWarmRouter(cacheWarmDeps));
+
 export default app;
 
 /** Vercel Serverless 에서는 listen 하지 않음 */
 if (!process.env.VERCEL) {
   const server = app.listen(PORT, () => {
     console.log(`bid proxy listening on http://localhost:${PORT}`);
+    startCacheWarmScheduler(cacheWarmDeps);
   });
 
   server.on("error", (err) => {

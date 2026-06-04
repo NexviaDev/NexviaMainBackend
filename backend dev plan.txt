@@ -8,7 +8,7 @@
 - 공공데이터포털 조달청 입찰공고정보·낙찰(개찰) OpenAPI(apis.data.go.kr)를 호출하는 프록시입니다.
 - 기업마당 지원사업정보(bizinfoApi.do)는 GET /api/v1/bizinfo/support 로, 행사·교육(bizinfoEventApi.do)은 GET /api/v1/bizinfo/events 로 프록시하며 crtfcKey 는 서버의 BIZINFO_CRTFC_KEY 로만 붙입니다.
 - 나라장터 사전규격·발주계획은 각각 GET /api/v1/prespec/:operation, GET /api/v1/ordrplan/:operation — 오퍼레이션은 사전규격 getPublicPrcure*/getInsttAccto*/getThngDetailMeta*, 발주계획 getOrderPlanSttus* 를 허용, ServiceKey 는 서버가 붙입니다(PRESPEC_BASE_URL, ORDR_PLAN_BASE_URL, 포털에서 해당 서비스 활용신청 필요).
-- 중소벤처기업부 RSS(사업공고·공지)는 GET /api/v1/feeds/mss?smba_board=310|81 — 서버 메모리 캐시 약 5분.
+- 중소벤처기업부 RSS(사업공고·공지)는 GET /api/v1/feeds/mss?smba_board=310|81 — 서버 메모리 캐시 30분(매시 :20·:50 warm 포함).
 - 인증키(ServiceKey·crtfcKey)는 backend/.env 에만 보관하고 브라우저로 내려보내지 않습니다.
 
 2) 호출 규약
@@ -24,6 +24,11 @@
 
 3) 슬립·지연 대응
 - axios timeout 은 60초, 네트워크/5xx 시 최대 2회 재시도(간단 지수 백오프).
+- 입찰·사전규격·기업마당 GET 응답은 서버 메모리 캐시 30분(동일 쿼리).
+- GET /api/v1/cache/warm?token=... — 수동·외부 cron 용. 구매·공사·용역·사전규격·기업마당·행사·RSS 기본 조회 upstream 선 채움. backend/.env CACHE_WARM_TOKEN 필수. force=1 이면 캐시 무시 재조회.
+- 서버 기동 시 자동 스케줄: 매시 정각 20분·50분에 force=1 로 7탭 기본 캐시 갱신 (cacheWarmScheduler.js). CACHE_WARM_SCHEDULE=0 이면 비활성.
+- 프론트 bidding 앱 진입 시 /health wake + 7탭 기본 prefetch (biddingTabPrefetch.ts).
+- GET /api/v1/cache/health — token·serviceKey 설정 여부(토큰 불필요).
 
 4) 확장
 - 참고문서에만 있고 UI에 없는 선택 파라미터는 동일하게 쿼리로 넘기면 upstream 까지 전달됩니다(단, serviceKey 는 서버 값으로 덮어씀).
