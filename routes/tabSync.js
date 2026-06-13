@@ -3,6 +3,7 @@ import rateLimit from "express-rate-limit";
 import { isMongoConfigured } from "../lib/mongo.js";
 import { findTabSnapshotTarget, TAB_SNAPSHOT_TARGETS } from "../lib/tabSyncKeys.js";
 import { getTabSnapshot, listTabSnapshots } from "../lib/tabSyncStore.js";
+import { TAB_SYNC_SCHEDULE_MINUTES, TAB_SYNC_CRON_EXPRESSION } from "../lib/tabSyncSchedule.js";
 import { runTabSync } from "../lib/tabSyncRun.js";
 
 const WARM_TOKEN = String(process.env.CACHE_WARM_TOKEN ?? "").trim();
@@ -49,7 +50,9 @@ export function createTabSyncRouter(deps) {
       ok: true,
       mongoConfigured: isMongoConfigured(),
       targets: TAB_SNAPSHOT_TARGETS.map((t) => t.tabKey),
-      scheduleMinutes: [20, 50],
+      scheduleMinutes: TAB_SYNC_SCHEDULE_MINUTES,
+      cronExpression: TAB_SYNC_CRON_EXPRESSION,
+      cronJobOrg: "https://console.cron-job.org/jobs",
     });
   });
 

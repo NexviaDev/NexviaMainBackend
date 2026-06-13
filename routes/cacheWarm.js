@@ -1,5 +1,6 @@
 import { Router } from "express";
 import rateLimit from "express-rate-limit";
+import { TAB_SYNC_SCHEDULE_MINUTES, TAB_SYNC_CRON_EXPRESSION } from "../lib/tabSyncSchedule.js";
 import { runCacheWarm } from "../lib/cacheWarmRun.js";
 
 const WARM_TOKEN = String(process.env.CACHE_WARM_TOKEN ?? "").trim();
@@ -43,7 +44,8 @@ export function createCacheWarmRouter(deps) {
       ok: true,
       tokenConfigured: Boolean(WARM_TOKEN),
       serviceKeyConfigured: Boolean(deps.serviceKey),
-      scheduleMinutes: [20, 50],
+      scheduleMinutes: TAB_SYNC_SCHEDULE_MINUTES,
+      cronExpression: TAB_SYNC_CRON_EXPRESSION,
       cacheTtlMinutes: 30,
       warmTargets: [
         "bid:Thng",
@@ -62,7 +64,7 @@ export function createCacheWarmRouter(deps) {
    * GET /api/v1/cache/warm?token=...
    * 외부 cron 또는 수동 — 7탭 기본 조건 전 페이지 upstream 조회 → 30분 서버 캐시
    * force=1 이면 캐시 hit 여부와 관계없이 재조회
-   * (서버 기동 시 :20·:50 자동 갱신 — cacheWarmScheduler.js)
+   * (운영: cron-job.org 매시 :15·:45 — backend/cron-job.org.txt 참고)
    */
   router.get("/warm", warmLimiter, authWarm, async (req, res) => {
     const force = req.query.force === "1" || req.query.force === "true";

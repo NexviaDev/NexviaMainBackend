@@ -1,0 +1,44 @@
+[cron-job.org — Nexvia MongoDB 탭 동기화]
+
+콘솔: https://console.cron-job.org/jobs
+Railway 백엔드: https://nexviamainbackend-production.up.railway.app
+토큰: backend/.env 의 CACHE_WARM_TOKEN (GitHub·공개 문서에 넣지 말 것)
+
+■ Railway 환경변수 (Variables)
+  CACHE_WARM_SCHEDULE=0
+  CACHE_WARM_TOKEN=<backend/.env 와 동일>
+
+■ cron-job.org 공통
+  Time zone: Asia/Seoul
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+작업 1) Railway 깨우기 (권장)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Title:     Nexvia backend wake
+URL:       https://nexviamainbackend-production.up.railway.app/health
+Schedule:  Every 10 minutes  (크론 */10 * * * *)
+Method:    GET
+Enabled:   ON
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+작업 2) MongoDB 탭 전체 동기화 (필수)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Title:     Nexvia tab-sync MongoDB
+URL:       https://nexviamainbackend-production.up.railway.app/api/v1/tab-sync/run?token=<CACHE_WARM_TOKEN>
+Schedule:  Custom cron → 15,45 * * * *
+           (매시 15·45분 = 30분 간격)
+Method:    GET
+Timeout:   300 초 이상
+Enabled:   ON
+
+동기화: bid:Thng, bid:Cnstwk, bid:Servc, prespec, bizinfo, events, mss:310, mss:81
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+확인 URL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+https://nexviamainbackend-production.up.railway.app/api/v1/tab-sync/health
+https://nexviamainbackend-production.up.railway.app/api/v1/tab-sync/status
+
+■ 로컬
+  CACHE_WARM_SCHEDULE=1 → 서버 자동 :15/:45
+  http://localhost:5001/api/v1/tab-sync/run?token=<CACHE_WARM_TOKEN>
