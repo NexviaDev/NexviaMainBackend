@@ -14,6 +14,7 @@ import { startCacheWarmScheduler } from "./lib/cacheWarmScheduler.js";
 import { isMongoConfigured } from "./lib/mongo.js";
 import { listTabSnapshots } from "./lib/tabSyncStore.js";
 import { runTabSync } from "./lib/tabSyncRun.js";
+import { isTabSyncRunning } from "./lib/tabSyncLock.js";
 import { sendUpstreamCacheHit } from "./lib/proxyJsonCache.js";
 import { fetchMssRssBoard } from "./lib/mssRss.js";
 import {
@@ -835,7 +836,21 @@ if (!process.env.VERCEL) {
     if (isMongoConfigured()) {
       setTimeout(async () => {
         try {
+          if (isTabSyncRunning()) {
+            console.log("[tab-sync] bootstrap skipped — sync already running");
+            return;
+          }
           const snaps = await listTabSnapshots();
+          const recentOk = snaps.some((s) => {
+            const n = Number(s.rowCount) || 0;
+            if (n <= 0) return false;
+            const t = s.syncedAt ? new Date(s.syncedAt).getTime() : 0;
+            return t > 0 && Date.now() - t < 15 * 60 * 1000;
+          });
+          if (recentOk) {
+            console.log("[tab-sync] bootstrap skipped — recent snapshots exist");
+            return;
+          }
           const allEmpty =
             snaps.length > 0 && snaps.every((s) => !s.rowCount || Number(s.rowCount) <= 0);
           if (snaps.length === 0 || allEmpty) {
