@@ -7,6 +7,12 @@ Railway 백엔드: https://nexviamainbackend-production.up.railway.app
 ■ Railway 환경변수 (Variables)
   CACHE_WARM_SCHEDULE=0
   CACHE_WARM_TOKEN=<backend/.env 와 동일>
+  TAB_SYNC_WAKE_URL=https://nexviamainbackend-production.up.railway.app
+  (또는 Railway 가 주는 RAILWAY_PUBLIC_DOMAIN — 둘 중 하나면 keep-alive 자동)
+
+■ tab-sync 실행 중 슬립 방지
+  - 서버 내부: runTabSync 시작 시 20초마다 /health 자동 ping (tabSyncKeepAlive.js)
+  - cron-job.org: 아래 작업 1) wake 를 5분마다 유지 (백업)
 
 ■ cron-job.org 공통
   Time zone: Asia/Seoul
@@ -16,7 +22,7 @@ Railway 백엔드: https://nexviamainbackend-production.up.railway.app
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Title:     Nexvia backend wake
 URL:       https://nexviamainbackend-production.up.railway.app/health
-Schedule:  Every 10 minutes  (크론 */10 * * * *)
+Schedule:  Every 5 minutes  (크론 */5 * * * *)
 Method:    GET
 Enabled:   ON
 
@@ -28,10 +34,10 @@ URL:       https://nexviamainbackend-production.up.railway.app/api/v1/tab-sync/r
 Schedule:  Custom cron → 15,45 * * * *
            (매시 15·45분 = 30분 간격)
 Method:    GET
-Timeout:   300 초 이상
+Timeout:   600 초 이상 (5~10분 동기화 + 병렬 4탭)
 Enabled:   ON
 
-동기화: bid:Thng, bid:Cnstwk, bid:Servc, prespec, bizinfo, events, mss:310, mss:81
+동기화: bid:Thng·Cnstwk·Servc·prespec(병렬) → bizinfo·events·mss(순차)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 확인 URL

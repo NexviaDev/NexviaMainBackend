@@ -836,10 +836,23 @@ if (!process.env.VERCEL) {
       setTimeout(async () => {
         try {
           const snaps = await listTabSnapshots();
-          if (snaps.length === 0) {
-            console.log("[tab-sync] no snapshots — bootstrap sync starting…");
+          const allEmpty =
+            snaps.length > 0 && snaps.every((s) => !s.rowCount || Number(s.rowCount) <= 0);
+          if (snaps.length === 0 || allEmpty) {
+            console.log(
+              snaps.length === 0
+                ? "[tab-sync] no snapshots — bootstrap sync starting…"
+                : "[tab-sync] snapshots exist but all empty — bootstrap re-sync starting…"
+            );
             const out = await runTabSync(cacheWarmDeps, { force: true, syncSlot: "bootstrap" });
             console.log(`[tab-sync] bootstrap done ok=${out.ok}`);
+            if (Array.isArray(out.results)) {
+              for (const r of out.results) {
+                console.log(
+                  `[tab-sync]   ${r.tabKey ?? r.label ?? "?"} ok=${r.ok} rows=${r.rowCount ?? 0}${r.error ? ` err=${r.error}` : ""}`
+                );
+              }
+            }
           }
         } catch (e) {
           console.warn("[tab-sync] bootstrap skipped:", e?.message || e);

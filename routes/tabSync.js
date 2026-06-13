@@ -1,5 +1,6 @@
 import { Router } from "express";
 import rateLimit from "express-rate-limit";
+import { resolveAuthUser, normalizeUserId } from "../lib/authSession.js";
 import { isMongoConfigured } from "../lib/mongo.js";
 import { findTabSnapshotTarget, TAB_SNAPSHOT_TARGETS } from "../lib/tabSyncKeys.js";
 import { getTabSnapshot, listTabSnapshots } from "../lib/tabSyncStore.js";
@@ -7,6 +8,22 @@ import { TAB_SYNC_SCHEDULE_MINUTES, TAB_SYNC_CRON_EXPRESSION } from "../lib/tabS
 import { runTabSync } from "../lib/tabSyncRun.js";
 
 const WARM_TOKEN = String(process.env.CACHE_WARM_TOKEN ?? "").trim();
+const TAB_SYNC_ADMIN_USER_ID = "develop@nexvia.co.kr";
+
+async function requireTabSyncAdmin(req, res) {
+  const auth = await resolveAuthUser(req);
+  if (auth.error) {
+    res.status(auth.status).json({ error: auth.error, message: auth.message });
+    return null;
+  }
+  const userId = normalizeUserId(auth.user.userId);
+  const email = normalizeUserId(auth.user.email);
+  if (userId !== TAB_SYNC_ADMIN_USER_ID && email !== TAB_SYNC_ADMIN_USER_ID) {
+    res.status(403).json({ error: "forbidden", message: "권한이 없습니다." });
+    return null;
+  }
+  return auth.user;
+}
 
 function authWarm(req, res, next) {
   if (!WARM_TOKEN) {
@@ -50,6 +67,8 @@ export function createTabSyncRouter(deps) {
       ok: true,
       mongoConfigured: isMongoConfigured(),
       targets: TAB_SNAPSHOT_TARGETS.map((t) => t.tabKey),
+      parallelTabs: ["bid:Thng", "bid:Cnstwk", "bid:Servc", "prespec"],
+      keepAliveIntervalSec: 20,
       scheduleMinutes: TAB_SYNC_SCHEDULE_MINUTES,
       cronExpression: TAB_SYNC_CRON_EXPRESSION,
       cronJobOrg: "https://console.cron-job.org/jobs",
@@ -117,6 +136,34 @@ export function createTabSyncRouter(deps) {
   router.get("/run", syncLimiter, authWarm, async (req, res) => {
     const force = req.query.force !== "0" && req.query.force !== "false";
     const result = await runTabSync(deps, { force, syncSlot: "manual" });
+    if (result.error === "mongodb_not_configured") {
+      return res.status(503).json({
+        error: "mongodb_not_configured",
+        message: "MONGODB_URI 가 설정되지 않았습니다.",
+      });
+    }
+    if (result.error === "missing_service_key") {
+      return res.status(503).json({
+        error: "missing_service_key",
+        message: "DATA_GO_KR_SERVICE_KEY 가 설정되지 않았습니다.",
+      });
+    }
+    return res.status(result.ok ? 200 : 502).json(result);
+  });
+
+  /**
+   * POST /api/v1/tab-sync/admin-run — develop@nexvia.co.kr 전용 수동 동기화
+   * Bearer JWT (CACHE_WARM_TOKEN 노출 없이 확인용)
+   */
+  router.post("/admin-run", syncLimiter, async (req, res) => {
+    const user = await requireTabSyncAdmin(req, res);
+    if (!user) return;
+
+    const force = req.body?.force !== false && req.body?.force !== "false" && req.body?.force !== 0;
+    const result = await runTabSync(deps, {
+      force,
+      syncSlot: `admin:${normalizeUserId(user.userId)}`,
+    });
     if (result.error === "mongodb_not_configured") {
       return res.status(503).json({
         error: "mongodb_not_configured",
