@@ -40,11 +40,29 @@ Enabled:   ON
 동기화: bid:Thng·Cnstwk·Servc·prespec(병렬) → bizinfo·events·mss(순차)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+작업 3) 예약 메일 발송 (필수 — 예약 기능 사용 시)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Title:     Nexvia scheduled email
+URL:       https://nexviamainbackend-production.up.railway.app/api/v1/scheduled-emails/run?token=<CACHE_WARM_TOKEN>
+Schedule:  Every 5 minutes  (크론 */5 * * * *)
+Method:    GET
+Timeout:   120 초 이상
+Enabled:   ON
+
+※ 작업 1) wake 와 동일 5분 주기면 함께 유지 — 슬립 방지 + 1회 예약 + 매일 반복 발송 처리
+※ Railway Variables: EMAIL_USER, EMAIL_PASS, MONGODB_URI, CACHE_WARM_TOKEN
+
+확인:
+https://nexviamainbackend-production.up.railway.app/api/v1/scheduled-emails/health
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 확인 URL
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 https://nexviamainbackend-production.up.railway.app/api/v1/tab-sync/health
 https://nexviamainbackend-production.up.railway.app/api/v1/tab-sync/status
 
-■ 로컬
-  CACHE_WARM_SCHEDULE=1 → 서버 자동 :15/:45
-  http://localhost:5001/api/v1/tab-sync/run?token=<CACHE_WARM_TOKEN>
+■ 로컬 (localhost:5001)
+  CACHE_WARM_SCHEDULE=1 → 서버 자동 :15/:45 tab-sync
+  SCHEDULED_EMAIL_INTERNAL=1(기본) → 5분마다 예약·매일 반복 메일 자동 처리 (cron-job 불필요)
+  npm start 후 콘솔: [scheduled-email] internal scheduler ON
+  실패 시 lastSentLocalDate 미갱신 → 다음 5분 tick 에 재시도 / 성공 시 당일 완료·다음날 지정 시각에 재발송

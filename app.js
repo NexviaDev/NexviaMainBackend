@@ -8,9 +8,11 @@ import plantsRouter from "./routes/plants.js";
 import docMergeRouter from "./routes/docMerge.js";
 import authRouter from "./routes/auth.js";
 import listTemplatesRouter from "./routes/listTemplates.js";
+import scheduledEmailsRouter from "./routes/scheduledEmails.js";
 import { createCacheWarmRouter } from "./routes/cacheWarm.js";
 import { createTabSyncRouter } from "./routes/tabSync.js";
 import { startCacheWarmScheduler } from "./lib/cacheWarmScheduler.js";
+import { startScheduledEmailScheduler } from "./lib/scheduledEmailScheduler.js";
 import { isMongoConfigured } from "./lib/mongo.js";
 import { listTabSnapshots } from "./lib/tabSyncStore.js";
 import { runTabSync } from "./lib/tabSyncRun.js";
@@ -391,6 +393,7 @@ app.use("/api/v1/plants", plantsRouter);
 app.use("/api/v1/doc-merge", docMergeRouter);
 app.use("/api/v1/auth", authRouter);
 app.use("/api/v1/list-templates", listTemplatesRouter);
+app.use("/api/v1/scheduled-emails", scheduledEmailsRouter);
 
 app.get("/api/v1/bid/:operation", async (req, res) => {
   const { operation } = req.params;
@@ -833,6 +836,7 @@ if (!process.env.VERCEL) {
   const server = app.listen(PORT, () => {
     console.log(`bid proxy listening on http://localhost:${PORT}`);
     startCacheWarmScheduler(cacheWarmDeps);
+    startScheduledEmailScheduler();
     if (isMongoConfigured()) {
       setTimeout(async () => {
         try {
