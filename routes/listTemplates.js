@@ -4,7 +4,6 @@ import rateLimit from "express-rate-limit";
 import { resolveAuthUser } from "../lib/authSession.js";
 import { isEmailConfigured, maskEmail } from "../lib/mail.js";
 import { sendListTemplateEmail } from "../lib/listTemplateEmail.js";
-import { logEmailHtmlDebug, logEmailSectionsContent } from "../lib/listTemplateEmailDebug.js";
 import {
   isAllowedEmailTemplateId,
   sanitizeEmailAttachments,
@@ -240,17 +239,7 @@ router.post("/send-email", emailLimiter, async (req, res) => {
     const list = Array.isArray(user?.listTemplates) ? user.listTemplates : [];
     const ownedIds = new Set(list.map((t) => t?.id).filter(Boolean));
 
-    if (Array.isArray(req.body?.sections) && req.body.sections.length > 0) {
-      logEmailHtmlDebug("send-email", req.body.sections, null, { phase: "raw-request" });
-      logEmailSectionsContent("send-email:raw", req.body.sections);
-    }
-
     let sections = sanitizeEmailSections(req.body?.sections, ownedIds);
-
-    if (sections.length > 0) {
-      logEmailHtmlDebug("send-email", sections, null, { phase: "after-sanitize" });
-      logEmailSectionsContent("send-email:sanitized", sections);
-    }
 
     if (sections.length === 0) {
       if (templateIds.length === 0) {
@@ -281,11 +270,6 @@ router.post("/send-email", emailLimiter, async (req, res) => {
       sections,
       note,
       attachments: sanitizeEmailAttachments(req.body?.attachments),
-    });
-
-    logEmailHtmlDebug("send-email", sections, null, {
-      phase: "sent-ok",
-      to: recipients.map((e) => maskEmail(e)).join(","),
     });
 
     const rowCount = sections.reduce((n, s) => n + s.rows.length, 0);
