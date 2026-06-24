@@ -214,7 +214,7 @@ router.post("/", scheduleLimiter, async (req, res) => {
       sentAt: null,
       error: null,
       rowCount,
-      emailCount: sections.length,
+      emailCount: 1,
     };
     await insertScheduledEmail(doc);
     await saveEmailSchedulePrefs(auth.user.userId, { recipients, timezone });
