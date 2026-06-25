@@ -22,9 +22,11 @@ import { runDueScheduledEmails } from "../lib/scheduledEmailRun.js";
 import { runDueRecurringEmails } from "../lib/recurringEmailRun.js";
 import {
   disableRecurringEmail,
+  disableRecurringBatch,
   listRecurringEmailsForUser,
   MAX_RECURRING_PER_USER,
   upsertRecurringEmail,
+  upsertRecurringBatch,
 } from "../lib/recurringEmailStore.js";
 import { formatRecurringLabel } from "../lib/recurringEmailTime.js";
 import { isMongoConfigured } from "../lib/mongo.js";
@@ -277,13 +279,84 @@ router.get("/recurring", async (req, res) => {
         recipients: (s.recipients ?? []).map((e) => maskEmail(e)),
         label: formatRecurringLabel(s.timeLocal, s.timezone),
       })),
-      recipientsByTemplate: Object.fromEntries(
-        schedules.map((s) => [s.templateId, s.recipients ?? []])
-      ),
     });
   } catch (e) {
     console.error("[scheduled-emails recurring GET]", e?.message || e);
     return res.status(502).json({ error: "db_error", message: "반복 설정 조회 실패" });
+  }
+});
+
+/** PUT /api/v1/scheduled-emails/recurring/batch — 발송 목록 여러 템플릿 → MongoDB 1건 */
+router.put("/recurring/batch", scheduleLimiter, async (req, res) => {
+  const auth = await resolveAuthUser(req);
+  if (auth.error) {
+    return res.status(auth.status).json({ error: auth.error, message: auth.message });
+  }
+  try {
+    const user = await auth.db.collection("users").findOne(
+      { userId: auth.user.userId },
+      { projection: { listTemplates: 1 } }
+    );
+    const list = Array.isArray(user?.listTemplates) ? user.listTemplates : [];
+    const ownedIds = new Set(list.map((t) => t?.id).filter(Boolean));
+
+    const { doc, scheduleChanged } = await upsertRecurringBatch(
+      auth.user.userId,
+      req.body,
+      ownedIds
+    );
+    return res.json({
+      ok: true,
+      schedule: {
+        scheduleId: doc.scheduleId,
+        enabled: doc.enabled,
+        timezone: doc.timezone,
+        timeLocal: doc.timeLocal,
+        repeat: doc.repeat,
+        templateCount: doc.templates?.length ?? 0,
+        maskedTo: doc.recipients.map((e) => maskEmail(e)),
+        label: formatRecurringLabel(doc.timeLocal, doc.timezone),
+        scheduleReset: scheduleChanged,
+      },
+    });
+  } catch (e) {
+    const msg = e?.message || "save_failed";
+    if (msg === "limit_reached") {
+      return res.status(409).json({
+        error: "limit_reached",
+        message: `반복 설정은 최대 ${MAX_RECURRING_PER_USER}건까지입니다.`,
+      });
+    }
+    if (msg === "template_not_owned" || msg === "invalid_templates" || msg === "invalid_template_snapshot") {
+      return res.status(400).json({ error: msg, message: "템플릿 정보가 올바르지 않습니다." });
+    }
+    if (msg === "invalid_recipients") {
+      return res.status(400).json({ error: msg, message: "수신 이메일을 입력해 주세요." });
+    }
+    console.error("[scheduled-emails recurring batch PUT]", msg);
+    return res.status(502).json({ error: "db_error", message: "반복 설정 저장 실패" });
+  }
+});
+
+/** DELETE /api/v1/scheduled-emails/recurring/batch/:scheduleId */
+router.delete("/recurring/batch/:scheduleId", async (req, res) => {
+  const auth = await resolveAuthUser(req);
+  if (auth.error) {
+    return res.status(auth.status).json({ error: auth.error, message: auth.message });
+  }
+  const scheduleId = String(req.params.scheduleId ?? "").trim();
+  if (!scheduleId) {
+    return res.status(400).json({ error: "invalid_id", message: "scheduleId가 필요합니다." });
+  }
+  try {
+    const ok = await disableRecurringBatch(auth.user.userId, scheduleId);
+    if (!ok) {
+      return res.status(404).json({ error: "not_found", message: "반복 설정을 찾을 수 없습니다." });
+    }
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error("[scheduled-emails recurring batch DELETE]", e?.message || e);
+    return res.status(502).json({ error: "db_error", message: "반복 해제 실패" });
   }
 });
 
