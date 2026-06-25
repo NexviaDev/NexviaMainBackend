@@ -27,7 +27,8 @@
     "mongodb": "^7.2.0",
     "multer": "^2.1.1",
     "nodemailer": "^8.0.10",
-    "pizzip": "^3.2.0"
+    "pizzip": "^3.2.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "nodemon": "^3.1.14"
