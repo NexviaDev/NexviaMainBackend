@@ -11,6 +11,8 @@ import listTemplatesRouter from "./routes/listTemplates.js";
 import scheduledEmailsRouter from "./routes/scheduledEmails.js";
 import { createCacheWarmRouter } from "./routes/cacheWarm.js";
 import { createTabSyncRouter } from "./routes/tabSync.js";
+import licenseRouter from "./routes/license.js";
+import licenseOrdersRouter from "./routes/licenseOrders.js";
 import { startCacheWarmScheduler } from "./lib/cacheWarmScheduler.js";
 import { startScheduledEmailScheduler } from "./lib/scheduledEmailScheduler.js";
 import { isMongoConfigured } from "./lib/mongo.js";
@@ -394,6 +396,10 @@ app.use("/api/v1/doc-merge", docMergeRouter);
 app.use("/api/v1/auth", authRouter);
 app.use("/api/v1/list-templates", listTemplatesRouter);
 app.use("/api/v1/scheduled-emails", scheduledEmailsRouter);
+/** NEXCAD license — canonical base https://www.nexvia.co.kr/api/license */
+app.use("/api/license", licenseRouter);
+// 신청·결제(토스·발주서) — 같은 base 아래에 붙인다.
+app.use("/api/license", licenseOrdersRouter);
 
 app.get("/api/v1/bid/:operation", async (req, res) => {
   const { operation } = req.params;
