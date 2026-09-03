@@ -6,10 +6,13 @@ import { Router } from "express";
 import rateLimit from "express-rate-limit";
 import { isMongoConfigured } from "../lib/mongo.js";
 import {
+  DEFAULT_PRODUCT_YEAR,
   OFFLINE_LEASE_DAYS,
+  clampProductYear,
   formatDisplay,
   issueFloating,
   leaseUntilIso,
+  licenseCoversApp,
   makeEntitlementToken,
   normalizeMachineId,
   parseCode,
@@ -48,12 +51,19 @@ import {
 const router = Router();
 
 const ADMIN_TOKEN = String(process.env.NEXVIA_LICENSE_ADMIN_TOKEN || "").trim();
+/** 라이선스 관리 페이지(`/license-admin`) 진입 비밀번호 — API Admin 토큰과 별개. */
+const PAGE_PASSWORD = String(process.env.NEXVIA_LICENSE_ADMIN_PAGE_PASSWORD || "").trim();
 const IS_PROD = String(process.env.NODE_ENV || "").toLowerCase() === "production";
 /** 개발 편의용 기본 토큰은 **운영에서 금지**. 미설정 상태로 배포되면 관리자 API 를 연다. */
 const ADMIN_TOKEN_OK = ADMIN_TOKEN.length >= 24 || (!IS_PROD && ADMIN_TOKEN.length > 0);
 if (IS_PROD && !ADMIN_TOKEN_OK) {
   console.error(
     "[license] NEXVIA_LICENSE_ADMIN_TOKEN 이 없거나 24자 미만입니다 — 관리자 API 를 모두 차단합니다."
+  );
+}
+if (IS_PROD && !PAGE_PASSWORD) {
+  console.error(
+    "[license] NEXVIA_LICENSE_ADMIN_PAGE_PASSWORD 가 없습니다 — /license-admin 페이지 게이트를 차단합니다."
   );
 }
 
@@ -77,6 +87,15 @@ const adminLimiter = rateLimit({
 const returnLimiter = rateLimit({
   windowMs: 60_000,
   max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { ok: false, error: "rate_limited" },
+});
+
+/** 페이지 게이트 비밀번호 추측 차단. */
+const pageGateLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 10,
   standardHeaders: true,
   legacyHeaders: false,
   message: { ok: false, error: "rate_limited" },
@@ -149,6 +168,36 @@ router.get("/v1/health", (_req, res) => {
     offline_lease_days: OFFLINE_LEASE_DAYS,
     base: "/api/license",
     mongo: isMongoConfigured(),
+    default_product_year: DEFAULT_PRODUCT_YEAR,
+    product_year_rule: "license_year >= app_year",
+  });
+});
+
+/**
+ * 라이선스 관리 SPA 진입 비밀번호 검증.
+ * 성공 시 프론트가 ?security=nexgeom 으로 이동한다.
+ * Admin API 토큰(NEXVIA_LICENSE_ADMIN_TOKEN)과 별개 — NEXVIA_LICENSE_ADMIN_PAGE_PASSWORD.
+ */
+router.post("/v1/admin/page-gate", pageGateLimiter, (req, res) => {
+  res.set("Cache-Control", "no-store");
+  if (!PAGE_PASSWORD) {
+    res.status(503).json({
+      ok: false,
+      error: "page_gate_unconfigured",
+      message: "NEXVIA_LICENSE_ADMIN_PAGE_PASSWORD 가 backend/.env 에 없습니다.",
+    });
+    return;
+  }
+  const password = String(req.body?.password ?? "");
+  if (!password || !safeEqual(password, PAGE_PASSWORD)) {
+    res.status(401).json({ ok: false, error: "invalid_password", message: "비밀번호가 올바르지 않습니다." });
+    return;
+  }
+  res.json({
+    ok: true,
+    unlock: "nexgeom",
+    security_param: "security",
+    security_value: "nexgeom",
   });
 });
 
@@ -172,11 +221,16 @@ router.post("/v1/admin/issue", adminLimiter, async (req, res) => {
     if (!tier) {
       return res.status(400).json({ ok: false, error: "tier must be viewer|cad|re" });
     }
+    const productYear = clampProductYear(
+      req.body?.product_year != null && req.body?.product_year !== ""
+        ? req.body.product_year
+        : DEFAULT_PRODUCT_YEAR,
+    );
     const qtyRaw = Number(req.body?.qty ?? req.body?.quantity ?? 1);
     const qty = Math.max(1, Math.min(50, Number.isFinite(qtyRaw) ? Math.floor(qtyRaw) : 1));
     const now = utcNowIso();
-    // 플로팅 키는 kind+만료가 같으면 암호상 동일 코드 → 좌석 슬롯만 qty개 추가
-    const code = issueFloating(kind, expires);
+    // 플로팅 키는 kind+만료+제품연도가 같으면 암호상 동일 코드 → 좌석 슬롯만 qty개 추가
+    const code = issueFloating(kind, expires, productYear);
     const parsed = parseCode(code);
     const seatIds = [];
     for (let i = 0; i < qty; i++) {
@@ -185,6 +239,7 @@ router.post("/v1/admin/issue", adminLimiter, async (req, res) => {
         kind: parsed.kind,
         expires: parsed.expires,
         tier,
+        productYear: parsed.product_year,
         updatedAt: now,
       });
       seatIds.push(seatId);
@@ -197,6 +252,7 @@ router.post("/v1/admin/issue", adminLimiter, async (req, res) => {
       kind,
       expires: expires ? expires.toISOString().slice(0, 10) : null,
       tier,
+      product_year: parsed.product_year,
       seats_total: pool.total,
     });
     return res.json({
@@ -211,9 +267,11 @@ router.post("/v1/admin/issue", adminLimiter, async (req, res) => {
       kind,
       expires: expires ? expires.toISOString().slice(0, 10) : null,
       tier,
+      product_year: parsed.product_year,
       modules: expandModules(tier),
       note:
-        "플로팅 키는 코드 1개 + 좌석 N석입니다. 같은 종류·만료면 코드 문자열이 같고, 좌석만 늘어납니다.",
+        "플로팅 키는 코드 1개 + 좌석 N석입니다. 같은 종류·만료·제품연도면 코드가 같고, 좌석만 늘어납니다. " +
+        `이 키는 NEXGEOM ${parsed.product_year} 및 그 이하 연도 앱에서 사용 가능합니다.`,
     });
   } catch (e) {
     return res.status(400).json({ ok: false, error: String(e?.message || e) });
@@ -276,17 +334,28 @@ router.get("/v1/admin/seats", adminLimiter, async (req, res) => {
   const seats = await listSeats(limit);
   return res.json({
     ok: true,
-    seats: seats.map((s) => ({
-      seat_id: s.seatId ?? null,
-      license_code: formatDisplay(s.codeBody),
-      kind: s.kind,
-      tier: s.tier ?? null,
-      expires: s.expires ?? null,
-      machine_id: s.machineId ?? null,
-      activated_at: s.activatedAt ?? null,
-      updated_at: s.updatedAt ?? null,
-      issued_at: s.issuedAt ?? null,
-    })),
+    seats: seats.map((s) => {
+      let productYear = s.productYear ?? null;
+      if (productYear == null && s.codeBody) {
+        try {
+          productYear = parseCode(formatDisplay(s.codeBody)).product_year;
+        } catch {
+          productYear = null;
+        }
+      }
+      return {
+        seat_id: s.seatId ?? null,
+        license_code: formatDisplay(s.codeBody),
+        kind: s.kind,
+        tier: s.tier ?? null,
+        expires: s.expires ?? null,
+        product_year: productYear,
+        machine_id: s.machineId ?? null,
+        activated_at: s.activatedAt ?? null,
+        updated_at: s.updatedAt ?? null,
+        issued_at: s.issuedAt ?? null,
+      };
+    }),
   });
 });
 
@@ -317,6 +386,11 @@ router.post("/v1/activate", licenseLimiter, async (req, res) => {
   try {
     const code = req.body?.license_code || req.body?.code || "";
     const machineId = normalizeMachineId(req.body?.machine_id);
+    const appYear = clampProductYear(
+      req.body?.product_year != null && req.body?.product_year !== ""
+        ? req.body.product_year
+        : DEFAULT_PRODUCT_YEAR,
+    );
     if (machineId.length !== 64) {
       return res.status(400).json({ ok: false, error: "machine_id must be 64 hex chars" });
     }
@@ -330,6 +404,21 @@ router.post("/v1/activate", licenseLimiter, async (req, res) => {
       }
     }
 
+    const licYear = parsed.product_year;
+    if (!licenseCoversApp(licYear, appYear)) {
+      return res.status(403).json({
+        ok: false,
+        error: "version_too_low",
+        message:
+          `License is for NEXGEOM ${licYear}; ` +
+          `this app is NEXGEOM ${appYear}. ` +
+          `A ${appYear}+ license is required ` +
+          `(higher-year keys work on older apps).`,
+        license_year: licYear,
+        app_year: appYear,
+      });
+    }
+
     const body = parsed.body;
     const now = utcNowIso();
     let row;
@@ -339,6 +428,7 @@ router.post("/v1/activate", licenseLimiter, async (req, res) => {
         kind: parsed.kind,
         expires: parsed.expires,
         tier: "cad",
+        productYear: licYear,
         machineId,
         activatedAt: now,
         updatedAt: now,
@@ -357,12 +447,14 @@ router.post("/v1/activate", licenseLimiter, async (req, res) => {
 
     const tier = entitlementTier(row);
     const lease = leaseUntilIso();
+    // product_year 필수 — CAD 가 없으면 2026으로 간주해 2027 앱에서 로컬 검증 실패.
     const entitlement = {
       v: 1,
       license_code: parsed.display,
       machine_id: machineId,
       kind: parsed.kind,
       expires: parsed.expires,
+      product_year: licYear,
       // 오프라인 유예 중 등급 위조를 막으려면 **서명 대상 안에** 있어야 한다.
       tier,
       modules: expandModules(tier),
@@ -374,6 +466,7 @@ router.post("/v1/activate", licenseLimiter, async (req, res) => {
     await writeAudit("activate", {
       license_code: parsed.display,
       machine_id: machineId,
+      product_year: licYear,
     });
     return res.json({
       ok: true,
@@ -424,11 +517,17 @@ router.post("/v1/status", licenseLimiter, async (req, res) => {
   try {
     const code = req.body?.license_code || req.body?.code || "";
     const machineId = normalizeMachineId(req.body?.machine_id);
+    const appYear = clampProductYear(
+      req.body?.product_year != null && req.body?.product_year !== ""
+        ? req.body.product_year
+        : DEFAULT_PRODUCT_YEAR,
+    );
     if (machineId.length !== 64) {
       return res.status(400).json({ ok: false, error: "machine_id must be 64 hex chars" });
     }
     const parsed = parseCode(String(code));
     const body = parsed.body;
+    const licYear = parsed.product_year;
 
     const [rev, row] = await Promise.all([
       findRevocation(body, machineId),
@@ -473,6 +572,21 @@ router.post("/v1/status", licenseLimiter, async (req, res) => {
       }
     }
 
+    if (!licenseCoversApp(licYear, appYear)) {
+      return res.json({
+        ok: true,
+        state: "version_too_low",
+        message:
+          `License is for NEXGEOM ${licYear}; ` +
+          `this app is NEXGEOM ${appYear}. ` +
+          `A ${appYear}+ license is required.`,
+        license_year: licYear,
+        app_year: appYear,
+        product_year: licYear,
+        offline_lease_days: OFFLINE_LEASE_DAYS,
+      });
+    }
+
     const lease = leaseUntilIso();
     const tier = entitlementTier(row);
     const pending = await findPendingByCode(body);
@@ -484,6 +598,7 @@ router.post("/v1/status", licenseLimiter, async (req, res) => {
       offline_lease_days: OFFLINE_LEASE_DAYS,
       kind: parsed.kind,
       expires: parsed.expires,
+      product_year: licYear,
       tier,
       modules: expandModules(tier),
       // 구 클라이언트가 모르는 필드 — state 를 바꾸지 않아 호환이 깨지지 않는다.
