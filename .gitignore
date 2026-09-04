@@ -2,3 +2,17 @@ node_modules/
 .env
 *.local
 .vercel
+
+# 이 PC 전용 개발환경 픽스 — 제품 코드가 아니다.
+# Git Bash 에서 npm/nodemon 이 안 잡히는 문제를 고치는 스크립트와 로컬 바이너리 shim.
+# C:\Program Files\nodejs 같은 이 PC 경로가 박혀 있어 저장소에 올리지 않는다.
+fix-gitbash-path.sh
+fix-node-global-path.bat
+fix-user-path-now.bat
+install-gitbash-nodemon.sh
+install-nodemon-global.bat
+use-local-bin.sh
+nodemon
+nodemon.cmd
+scripts/_ensure_npm_global_path.py
+scripts/_install_nodemon_global.py
