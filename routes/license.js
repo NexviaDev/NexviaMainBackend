@@ -229,7 +229,7 @@ router.post("/v1/admin/issue", adminLimiter, async (req, res) => {
     const qtyRaw = Number(req.body?.qty ?? req.body?.quantity ?? 1);
     const qty = Math.max(1, Math.min(50, Number.isFinite(qtyRaw) ? Math.floor(qtyRaw) : 1));
     const now = utcNowIso();
-    // 플로팅 키는 kind+만료+제품연도가 같으면 암호상 동일 코드 → 좌석 슬롯만 qty개 추가
+    // Format v3: Issue 마다 고유 코드. qty = 그 코드 아래 좌석 수
     const code = issueFloating(kind, expires, productYear);
     const parsed = parseCode(code);
     const seatIds = [];
@@ -270,7 +270,7 @@ router.post("/v1/admin/issue", adminLimiter, async (req, res) => {
       product_year: parsed.product_year,
       modules: expandModules(tier),
       note:
-        "플로팅 키는 코드 1개 + 좌석 N석입니다. 같은 종류·만료·제품연도면 코드가 같고, 좌석만 늘어납니다. " +
+        "발급마다 고유 플로팅 코드가 생성됩니다. 수량(qty)은 이 코드의 좌석 수입니다. " +
         `이 키는 NEXGEOM ${parsed.product_year} 및 그 이하 연도 앱에서 사용 가능합니다.`,
     });
   } catch (e) {
